@@ -178,17 +178,68 @@ def get_final_error(ret_nodes, nodes, assumedNodesPresent, trueNodesPresent, loo
 
         nodeID = look_up[nodeID]
 
-        
+
+        pred_pos = ret_nodes[tstep, nodeID, :]
+        true_pos = nodes[tstep, nodeID, :]
+
+        error += torch.norm(pred_pos - true_pos, p=2)
+        counter += 1
+
+    if counter != 0:
+        error = error / counter
+
+    return error
+
+
+def get_3s_error(ret_nodes, nodes, assumedNodesPresent, trueNodesPresent, look_up):
+    '''
+    Parameters
+    ==========
+
+    ret_nodes : A tensor of shape pred_length x numNodes x 2
+    Contains the predicted positions for the nodes
+
+    nodes : A tensor of shape pred_length x numNodes x 2
+    Contains the true positions for the nodes
+
+    nodesPresent lists: A list of lists, of size pred_length
+    Each list contains the nodeIDs of the nodes present at that time-step
+
+    look_up : lookup table for determining which ped is in which array index
+
+
+    Returns
+    =======
+
+    Error : Mean final euclidean distance between predicted trajectory and the true trajectory
+    '''
+    pred_length = ret_nodes.size()[0]
+    error = 0
+    counter = 0
+
+    # Last time-step
+    tstep = 30
+    for nodeID in assumedNodesPresent[tstep]:
+        nodeID = int(nodeID)
+
+
+        if nodeID not in trueNodesPresent[tstep]:
+            continue
+
+        nodeID = look_up[nodeID]
+
+
         pred_pos = ret_nodes[tstep, nodeID, :]
         true_pos = nodes[tstep, nodeID, :]
         
         error += torch.norm(pred_pos - true_pos, p=2)
         counter += 1
-        
+
     if counter != 0:
         error = error / counter
-            
+
     return error
+
 
 def Gaussian2DLikelihoodInference(outputs, targets, nodesPresent, pred_length, look_up):
     '''
@@ -456,7 +507,7 @@ def sample_validation_data(x_seq, Pedlist, grid, args, net, look_up, num_pedlist
         ret_x_seq[0] = x_seq[0]
 
         # For the observed part of the trajectory
-        for tstep in range(args.seq_length -1):
+        for tstep in range(args.seq_length - args.pred_length -1):
             loss = 0
             # Do a forward prop
             out_, hidden_states, cell_states = net(x_seq[tstep].view(1, numx_seq, 2), [grid[tstep]], hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
@@ -471,6 +522,21 @@ def sample_validation_data(x_seq, Pedlist, grid, args, net, look_up, num_pedlist
             loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep].view(1, numx_seq, 2), [Pedlist[tstep]], look_up)
             total_loss += loss
 
+        # For the prediction part of the trajectory
+        for tstep in range(args.seq_length - args.pred_length -1, args.seq_length - 1):
+            loss = 0
+            # Do a forward prop
+            out_, hidden_states, cell_states = net(ret_x_seq[tstep].view(1, numx_seq, 2), [grid[tstep]], hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
+            # loss_obs = Gaussian2DLikelihood(out_obs, x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]])
+
+            # Extract the mean, std and corr of the bivariate Gaussian
+            mux, muy, sx, sy, corr = getCoef(out_)
+            # Sample from the bivariate Gaussian
+            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+            ret_x_seq[tstep + 1, :, 0] = next_x
+            ret_x_seq[tstep + 1, :, 1] = next_y
+            loss = Gaussian2DLikelihood(out_[0].view(1, out_.size()[1], out_.size()[2]), x_seq[tstep].view(1, numx_seq, 2), [Pedlist[tstep]], look_up)
+            total_loss += loss
 
     return ret_x_seq, total_loss / args.seq_length
 
@@ -530,6 +596,117 @@ def sample_validation_data_vanilla(x_seq, Pedlist, args, net, look_up, num_pedli
 
 
     return ret_x_seq, total_loss / args.seq_length
+
+
+def sample_test(x_seq, Pedlist, grid, args, net, look_up, num_pedlist, dataloader):
+    '''
+    The sample function
+    params:
+    x_seq: Input positions
+    Pedlist: Peds present in each frame
+    args: arguments
+    net: The model
+    true_x_seq: True positions
+    Pedlist: The true peds present in each frame
+    saved_args: Training arguments
+    dimensions: The dimensions of the dataset
+    target_id: ped_id number that try to predict in this sequence
+    '''
+    dimensions = [720, 576]
+    # Number of peds in the sequence
+    numx_seq = len(look_up)
+
+    with torch.no_grad():
+        # Construct variables for hidden and cell states
+        hidden_states = Variable(torch.zeros(numx_seq, net.args.rnn_size))
+        if args.use_cuda:
+            hidden_states = hidden_states.cuda()
+        if not args.gru:
+            cell_states = Variable(torch.zeros(numx_seq, net.args.rnn_size))
+            if args.use_cuda:
+                cell_states = cell_states.cuda()
+        else:
+            cell_states = None
+
+
+        ret_x_seq = Variable(torch.zeros(args.obs_length+args.pred_length, numx_seq, 2))
+
+        # Initialize the return data structure
+        if args.use_cuda:
+            ret_x_seq = ret_x_seq.cuda()
+
+
+        # For the observed part of the trajectory
+        for tstep in range(args.obs_length-1):
+            if grid is None: #vanilla lstm
+               # Do a forward prop
+                out_obs, hidden_states, cell_states = net(x_seq[tstep].view(1, numx_seq, 2), hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
+            else:
+                # Do a forward prop
+                out_obs, hidden_states, cell_states = net(x_seq[tstep].view(1, numx_seq, 2), [grid[tstep]], hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
+            # loss_obs = Gaussian2DLikelihood(out_obs, x_seq[tstep+1].view(1, numx_seq, 2), [Pedlist[tstep+1]])
+
+            # Extract the mean, std and corr of the bivariate Gaussian
+            mux, muy, sx, sy, corr = getCoef(out_obs)
+            # Sample from the bivariate Gaussian
+            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+            ret_x_seq[tstep + 1, :, 0] = next_x
+            ret_x_seq[tstep + 1, :, 1] = next_y
+
+
+        ret_x_seq[:args.obs_length, :, :] = x_seq[:args.obs_length, :, :].clone()
+
+        # Last seen grid
+        if grid is not None: #no vanilla lstm
+            prev_grid = grid[-1].clone()
+
+        #assign last position of observed data to temp
+        #temp_last_observed = ret_x_seq[args.obs_length-1].clone()
+        #ret_x_seq[args.obs_length-1] = x_seq[args.obs_length-1]
+
+        # For the predicted part of the trajectory
+        for tstep in range(args.obs_length-1, args.pred_length + args.obs_length-1):
+            # Do a forward prop
+            if grid is None: #vanilla lstm
+                outputs, hidden_states, cell_states = net(ret_x_seq[tstep].view(1, numx_seq, 2), hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
+            else:
+                outputs, hidden_states, cell_states = net(ret_x_seq[tstep].view(1, numx_seq, 2), [prev_grid], hidden_states, cell_states, [Pedlist[tstep]], [num_pedlist[tstep]], dataloader, look_up)
+
+            # Extract the mean, std and corr of the bivariate Gaussian
+            mux, muy, sx, sy, corr = getCoef(outputs)
+            # Sample from the bivariate Gaussian
+            next_x, next_y = sample_gaussian_2d(mux.data, muy.data, sx.data, sy.data, corr.data, Pedlist[tstep], look_up)
+
+            # Store the predicted position
+            ret_x_seq[tstep + 1, :, 0] = next_x
+            ret_x_seq[tstep + 1, :, 1] = next_y
+
+            # List of x_seq at the last time-step (assuming they exist until the end)
+            Pedlist[tstep+1] = [int(_x_seq) for _x_seq in Pedlist[tstep+1]]
+            next_ped_list = copy.deepcopy(Pedlist[tstep+1])
+            converted_pedlist = [look_up[_x_seq] for _x_seq in next_ped_list]
+            list_of_x_seq = Variable(torch.LongTensor(converted_pedlist))
+
+            if args.use_cuda:
+                list_of_x_seq = list_of_x_seq.cuda()
+           
+            #Get their predicted positions
+            current_x_seq = torch.index_select(ret_x_seq[tstep+1], 0, list_of_x_seq)
+
+            if grid is not None: #no vanilla lstm
+                # Compute the new grid masks with the predicted positions
+                if args.method == 2: #obstacle lstm
+                    prev_grid = getGridMask(current_x_seq.data.cpu(), dimensions, len(true_Pedlist[tstep+1]),saved_args.neighborhood_size, saved_args.grid_size, True)
+                elif  args.method == 1: #social lstm   
+                    prev_grid = getGridMask(current_x_seq.data.cpu(), dimensions, len(true_Pedlist[tstep+1]),saved_args.neighborhood_size, saved_args.grid_size)
+
+                prev_grid = Variable(torch.from_numpy(prev_grid).float())
+                if args.use_cuda:
+                    prev_grid = prev_grid.cuda()
+
+        #ret_x_seq[args.obs_length-1] = temp_last_observed
+
+        return ret_x_seq
 
 
 def rotate_traj_with_target_ped(x_seq, angle, PedsList_seq, lookup_seq):

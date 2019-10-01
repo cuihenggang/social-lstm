@@ -1,3 +1,4 @@
+import copy
 import os
 import pickle
 import os
@@ -157,7 +158,7 @@ def main():
             #will be used for error calculation
             orig_x_seq = x_seq.clone() 
             
-            target_id_values = orig_x_seq[0][lookup_seq[target_id], 0:2]
+            # target_id_values = orig_x_seq[0][lookup_seq[target_id], 0:2]
             
             #grid mask calculation
             if sample_args.method == 2: #obstacle lstm
@@ -192,15 +193,16 @@ def main():
             
             #revert the points back to original space
             ret_x_seq = revert_seq(ret_x_seq, PedsList_seq, lookup_seq, first_values_dict)
-            
+
             # <--------------------- Experimental inverse block ---------------------->
             # ret_x_seq = revert_seq(ret_x_seq, PedsList_seq, lookup_seq, target_id_values, first_values_dict)
             # ret_x_seq = rotate_traj_with_target_ped(ret_x_seq, -angle, PedsList_seq, lookup_seq)
             # ret_x_seq = translate(ret_x_seq, PedsList_seq, lookup_seq ,-target_id_values)
             
             # Record the mean and final displacement error
-            total_error += get_mean_error(ret_x_seq[1:sample_args.obs_length].data, orig_x_seq[1:sample_args.obs_length].data, PedsList_seq[1:sample_args.obs_length], PedsList_seq[1:sample_args.obs_length], sample_args.use_cuda, lookup_seq)
-            final_error += get_final_error(ret_x_seq[1:sample_args.obs_length].data, orig_x_seq[1:sample_args.obs_length].data, PedsList_seq[1:sample_args.obs_length], PedsList_seq[1:sample_args.obs_length], lookup_seq)
+            print(PedsList_seq[-sample_args.pred_length:])
+            total_error += get_mean_error(ret_x_seq[-sample_args.pred_length:].data, orig_x_seq[-sample_args.pred_length:].data, PedsList_seq[-sample_args.pred_length:], PedsList_seq[-sample_args.pred_length:], sample_args.use_cuda, lookup_seq)
+            final_error += get_final_error(ret_x_seq[-sample_args.pred_length:].data, orig_x_seq[-sample_args.pred_length:].data, PedsList_seq[-sample_args.pred_length:], PedsList_seq[-sample_args.pred_length:], lookup_seq)
 
             
             end = time.time()
@@ -209,25 +211,25 @@ def main():
 
 
 
-            if dataset_pointer_ins is not dataloader.dataset_pointer:
-                if dataloader.dataset_pointer is not 0:
-                    iteration_submission.append(submission)
-                    iteration_result.append(results)
+            # if dataset_pointer_ins is not dataloader.dataset_pointer:
+                # if dataloader.dataset_pointer is not 0:
+                    # iteration_submission.append(submission)
+                    # iteration_result.append(results)
 
-                dataset_pointer_ins = dataloader.dataset_pointer
-                submission = []
-                results = []
+                # dataset_pointer_ins = dataloader.dataset_pointer
+                # submission = []
+                # results = []
 
             
-            submission.append(submission_preprocess(dataloader, ret_x_seq.data[sample_args.obs_length:, lookup_seq[target_id], :].numpy(), sample_args.pred_length, sample_args.obs_length, target_id))
-            results.append((x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), PedsList_seq, lookup_seq , dataloader.get_frame_sequence(seq_lenght), target_id, sample_args.obs_length))
+            # submission.append(submission_preprocess(dataloader, ret_x_seq.data[sample_args.obs_length:, lookup_seq[target_id], :].numpy(), sample_args.pred_length, sample_args.obs_length, target_id))
+            # results.append((x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), PedsList_seq, lookup_seq , dataloader.get_frame_sequence(seq_lenght), target_id, sample_args.obs_length))
 
 
-        iteration_submission.append(submission)
-        iteration_result.append(results)
+        # iteration_submission.append(submission)
+        # iteration_result.append(results)
 
-        submission_store.append(iteration_submission)
-        result_store.append(iteration_result)
+        # submission_store.append(iteration_submission)
+        # result_store.append(iteration_result)
 
         if total_error<smallest_err:
             print("**********************************************************")
@@ -241,8 +243,8 @@ def main():
         #print(submission)
 
     print('Smallest error iteration:', smallest_err_iter_num+1)
-    dataloader.write_to_file(submission_store[smallest_err_iter_num], result_directory, prefix, model_name)
-    dataloader.write_to_plot_file(result_store[smallest_err_iter_num], os.path.join(plot_directory, plot_test_file_directory))
+    # dataloader.write_to_file(submission_store[smallest_err_iter_num], result_directory, prefix, model_name)
+    # dataloader.write_to_plot_file(result_store[smallest_err_iter_num], os.path.join(plot_directory, plot_test_file_directory))
 
 
 def sample(x_seq, Pedlist, args, net, true_x_seq, true_Pedlist, saved_args, dimensions, dataloader, look_up, num_pedlist, is_gru, grid = None):
@@ -329,7 +331,7 @@ def sample(x_seq, Pedlist, args, net, true_x_seq, true_Pedlist, saved_args, dime
 
             # List of x_seq at the last time-step (assuming they exist until the end)
             true_Pedlist[tstep+1] = [int(_x_seq) for _x_seq in true_Pedlist[tstep+1]]
-            next_ped_list = true_Pedlist[tstep+1].copy()
+            next_ped_list = copy.deepcopy(true_Pedlist[tstep+1])
             converted_pedlist = [look_up[_x_seq] for _x_seq in next_ped_list]
             list_of_x_seq = Variable(torch.LongTensor(converted_pedlist))
 

@@ -90,7 +90,7 @@ def main():
                         help='Whether store grids and use further epoch')
     
     args = parser.parse_args()
-    
+    args.obs_length = args.seq_length - args.pred_length
     train(args)
 
 
@@ -215,7 +215,7 @@ def train(args):
 
                 #dense vector creation
                 x_seq, lookup_seq = dataloader.convert_proper_array(x_seq, numPedsList_seq, PedsList_seq)
-                target_id_values = x_seq[0][lookup_seq[target_id], 0:2]
+                # target_id_values = x_seq[0][lookup_seq[target_id], 0:2]
 
                 #grid mask calculation and storage depending on grid parameter
                 if(args.grid):
@@ -371,7 +371,7 @@ def train(args):
                     #dense vector creation
                     x_seq, lookup_seq = dataloader.convert_proper_array(x_seq, numPedsList_seq, PedsList_seq)
 
-                    target_id_values = x_seq[0][lookup_seq[target_id], 0:2]
+                    # target_id_values = x_seq[0][lookup_seq[target_id], 0:2]
                     
                     #get grid mask
                     grid_seq = getSequenceGridMask(x_seq, dataset_data, PedsList_seq, args.neighborhood_size, args.grid_size, args.use_cuda)
@@ -452,6 +452,7 @@ def train(args):
             loss_epoch = 0
             err_epoch = 0
             f_err_epoch = 0
+            at_3s_err_epoch = 0
             num_of_batch = 0
             smallest_err = 100000
 
@@ -482,6 +483,7 @@ def train(args):
                 loss_batch = 0
                 err_batch = 0
                 f_err_batch = 0
+                at_3s_err_batch = 0
 
                 # For each sequence
                 for sequence in range(dataloader.batch_size):
@@ -499,7 +501,7 @@ def train(args):
                     #will be used for error calculation
                     orig_x_seq = x_seq.clone() 
                     
-                    target_id_values = orig_x_seq[0][lookup_seq[target_id], 0:2]
+                    # target_id_values = orig_x_seq[0][lookup_seq[target_id], 0:2]
                     
                     #grid mask calculation
                     grid_seq = getSequenceGridMask(x_seq, dataset_data, PedsList_seq, args.neighborhood_size, args.grid_size, args.use_cuda)
@@ -543,22 +545,27 @@ def train(args):
                     # ret_x_seq = translate(ret_x_seq, PedsList_seq, lookup_seq ,-target_id_values)
 
                     #get mean and final error
-                    err = get_mean_error(ret_x_seq.data, orig_x_seq.data, PedsList_seq, PedsList_seq, args.use_cuda, lookup_seq)
-                    f_err = get_final_error(ret_x_seq.data, orig_x_seq.data, PedsList_seq, PedsList_seq, lookup_seq)
-                    
+                    # import pdb
+                    # pdb.set_trace()
+                    err = get_mean_error(ret_x_seq[-args.pred_length:].data, orig_x_seq[-args.pred_length:].data, PedsList_seq[-args.pred_length:], PedsList_seq[-args.pred_length:], args.use_cuda, lookup_seq)
+                    f_err = get_final_error(ret_x_seq[-args.pred_length:].data, orig_x_seq[-args.pred_length:].data, PedsList_seq[-args.pred_length:], PedsList_seq[-args.pred_length:], lookup_seq)
+                    at_3s_err = get_3s_error(ret_x_seq[-args.pred_length:].data, orig_x_seq[-args.pred_length:].data, PedsList_seq[-args.pred_length:], PedsList_seq[-args.pred_length:], lookup_seq)
                     loss_batch += loss.item()
                     err_batch += err
                     f_err_batch += f_err
+                    at_3s_err_batch += at_3s_err
                     print('Current file : ', dataloader.get_file_name(0),' Batch : ', batch+1, ' Sequence: ', sequence+1, ' Sequence mean error: ', err,' Sequence final error: ',f_err,' time: ', end - start)
                     results.append((orig_x_seq.data.cpu().numpy(), ret_x_seq.data.cpu().numpy(), PedsList_seq, lookup_seq, dataloader.get_frame_sequence(args.seq_length), target_id))
 
                 loss_batch = loss_batch / dataloader.batch_size
                 err_batch = err_batch / dataloader.batch_size
                 f_err_batch = f_err_batch / dataloader.batch_size
+                at_3s_err_batch = at_3s_err_batch / dataloader.batch_size
                 num_of_batch += 1
                 loss_epoch += loss_batch
                 err_epoch += err_batch
                 f_err_epoch += f_err_batch
+                at_3s_err_epoch += at_3s_err_batch
 
             epoch_result.append(results)
             all_epoch_results.append(epoch_result)
@@ -568,6 +575,7 @@ def train(args):
                 loss_epoch = loss_epoch / dataloader.num_batches
                 err_epoch = err_epoch / dataloader.num_batches
                 f_err_epoch = f_err_epoch / dataloader.num_batches
+                at_3s_err_epoch = at_3s_err_epoch / dataloader.num_batches
                 avarage_err = (err_epoch + f_err_epoch)/2
 
                 # Update best validation loss until now
@@ -579,7 +587,7 @@ def train(args):
                     smallest_err_val_data = avarage_err
                     best_err_epoch_val_data = epoch
 
-                print('(epoch {}), valid_loss = {:.3f}, valid_mean_err = {:.3f}, valid_final_err = {:.3f}'.format(epoch, loss_epoch, err_epoch, f_err_epoch))
+                print('(epoch {}), valid_loss = {:.3f}, valid_mean_err = {:.3f}, valid_final_err = {:.3f}, valid_3s_err = {:.3f}'.format(epoch, loss_epoch, err_epoch, f_err_epoch, at_3s_err_epoch))
                 print('Best epoch', best_epoch_val_data, 'Best validation loss', best_val_data_loss, 'Best error epoch',best_err_epoch_val_data, 'Best error', smallest_err_val_data)
                 log_file_curve.write("Validation dataset epoch: "+str(epoch)+" loss: "+str(loss_epoch)+" mean_err: "+str(err_epoch)+'final_err: '+str(f_err_epoch)+'\n')
 
@@ -593,8 +601,6 @@ def train(args):
             'state_dict': net.state_dict(),
             'optimizer_state_dict': optimizer.state_dict()
         }, checkpoint_path(epoch))
-
-
 
 
     if dataloader.valid_num_batches != 0:        

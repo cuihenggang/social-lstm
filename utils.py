@@ -1,3 +1,4 @@
+import glob
 import os
 import pickle
 import numpy as np
@@ -21,47 +22,23 @@ class DataLoader():
         generate : flag for data generation mode
         forcePreProcess : Flag to forcefully preprocess the data again from csv files
         '''
-        # base test files
-        base_test_dataset=  ['/data/test/biwi/biwi_eth.txt', 
-                        '/data/test/crowds/crowds_zara01.txt',
-                        '/data/test/crowds/uni_examples.txt', 
-                        '/data/test/stanford/coupa_0.txt',
-                         '/data/test/stanford/coupa_1.txt', '/data/test/stanford/gates_2.txt','/data/test/stanford/hyang_0.txt','/data/test/stanford/hyang_1.txt','/data/test/stanford/hyang_3.txt','/data/test/stanford/hyang_8.txt',
-                          '/data/test/stanford/little_0.txt','/data/test/stanford/little_1.txt','/data/test/stanford/little_2.txt','/data/test/stanford/little_3.txt','/data/test/stanford/nexus_5.txt','/data/test/stanford/nexus_6.txt',
-                          '/data/test/stanford/quad_0.txt','/data/test/stanford/quad_1.txt','/data/test/stanford/quad_2.txt','/data/test/stanford/quad_3.txt'
-                          ]
-        #base train files
-        base_train_dataset = ['/data/train/biwi/biwi_hotel.txt', 
-                        #'/data/train/crowds/arxiepiskopi1.txt','/data/train/crowds/crowds_zara02.txt',
-                        #'/data/train/crowds/crowds_zara03.txt','/data/train/crowds/students001.txt','/data/train/crowds/students003.txt',
-                        #'/data/train/mot/PETS09-S2L1.txt',
-                        #'/data/train/stanford/bookstore_0.txt','/data/train/stanford/bookstore_1.txt','/data/train/stanford/bookstore_2.txt','/data/train/stanford/bookstore_3.txt','/data/train/stanford/coupa_3.txt','/data/train/stanford/deathCircle_0.txt','/data/train/stanford/deathCircle_1.txt','/data/train/stanford/deathCircle_2.txt','/data/train/stanford/deathCircle_3.txt',
-                        #'/data/train/stanford/deathCircle_4.txt','/data/train/stanford/gates_0.txt','/data/train/stanford/gates_1.txt','/data/train/stanford/gates_3.txt','/data/train/stanford/gates_4.txt','/data/train/stanford/gates_5.txt','/data/train/stanford/gates_6.txt','/data/train/stanford/gates_7.txt','/data/train/stanford/gates_8.txt','/data/train/stanford/hyang_4.txt',
-                        #'/data/train/stanford/hyang_5.txt','/data/train/stanford/hyang_6.txt','/data/train/stanford/hyang_9.txt','/data/train/stanford/nexus_0.txt','/data/train/stanford/nexus_1.txt','/data/train/stanford/nexus_2.txt','/data/train/stanford/nexus_3.txt','/data/train/stanford/nexus_4.txt','/data/train/stanford/nexus_7.txt','/data/train/stanford/nexus_8.txt','/data/train/stanford/nexus_9.txt'
-                        ]
         # dimensions of each file set
-        self.dataset_dimensions = {'biwi':[720, 576], 'crowds':[720, 576], 'stanford':[595, 326], 'mot':[768, 576]}
+        self.dataset_dimensions = {'biwi':[720, 576], 'crowds':[720, 576], 'stanford':[595, 326], 'mot':[768, 576], 'dp_ped': [720, 576], 'dp_bike': [720, 576], 'dp_vehicle': [720, 576]}
         
         # List of data directories where raw data resides
         self.base_train_path = 'data/train/'
         self.base_test_path = 'data/test/'
         self.base_validation_path = 'data/validation/'
 
-        # check infer flag, if true choose test directory as base directory
-        if infer is False:
-            self.base_data_dirs = base_train_dataset
-        else:
-            self.base_data_dirs = base_test_dataset
-
-        # get all files using python os and base directories
-        self.train_dataset = self.get_dataset_path(self.base_train_path, f_prefix)
-        self.test_dataset = self.get_dataset_path(self.base_test_path, f_prefix)
-        self.validation_dataset = self.get_dataset_path(self.base_validation_path, f_prefix)
-
+        # get all files
+        # We can only use 10% of the data due to memory issue.
+        self.train_dataset = glob.glob('./data/train/dp_vehicle/*0.txt')
+        self.test_dataset = glob.glob('./data/test/dp_vehicle/*.txt')
+        self.validation_dataset = glob.glob('./data/validation/dp_vehicle/*.txt')
 
         # if generate mode, use directly train base files
         if generate:
-            self.train_dataset = [os.path.join(f_prefix, dataset[1:]) for dataset in base_train_dataset]
+            assert False
 
         #request of use of validation dataset
         if num_of_validation>0:
@@ -117,10 +94,6 @@ class DataLoader():
         self.data_file_tr = os.path.join(self.train_data_dir, "trajectories_train.cpkl")        
         self.data_file_te = os.path.join(self.base_test_path, "trajectories_test.cpkl")
         self.data_file_vl = os.path.join(self.val_data_dir, "trajectories_val.cpkl")
-
-
-        # for creating a dict key: folder names, values: files in this folder
-        self.create_folder_file_dict()
 
         if self.additional_validation:
         # If the file doesn't exist or forcePreProcess is true
@@ -210,21 +183,24 @@ class DataLoader():
             column_names = ['frame_num','ped_id','y','x']
 
             # if training mode, read train file to pandas dataframe and process
+            delimiter = ','
+            # delimiter = ' '
             if self.infer is False:
-                df = pd.read_csv(directory, dtype={'frame_num':'int','ped_id':'int' }, delimiter = ' ',  header=None, names=column_names)
+                df = pd.read_csv(directory, dtype={'frame_num':'float','ped_id':'int' }, delimiter = delimiter,  header=None, names=column_names)
+                # df = df.sort_values(['ped_id', 'frame_num'])
                 self.target_ids = np.array(df.drop_duplicates(subset={'ped_id'}, keep='first', inplace=False)['ped_id'])
-
-
             else:
                 # if validation mode, read validation file to pandas dataframe and process
                 if self.additional_validation:
-                    df = pd.read_csv(directory, dtype={'frame_num':'int','ped_id':'int' }, delimiter = ' ',  header=None, names=column_names)
+                    df = pd.read_csv(directory, dtype={'frame_num':'float','ped_id':'int' }, delimiter = delimiter,  header=None, names=column_names)
+                    # df = df.sort_values(['ped_id', 'frame_num'])
                     self.target_ids = np.array(df.drop_duplicates(subset={'ped_id'}, keep='first', inplace=False)['ped_id'])
 
                 # if test mode, read test file to pandas dataframe and process
                 else:
                     column_names = ['frame_num','ped_id','y','x']
-                    df = pd.read_csv(directory, dtype={'frame_num':'int','ped_id':'int' }, delimiter = ' ',  header=None, names=column_names, converters = {c:lambda x: float('nan') if x == '?' else float(x) for c in ['y','x']})
+                    df = pd.read_csv(directory, dtype={'frame_num':'float','ped_id':'int' }, delimiter = delimiter,  header=None, names=column_names, converters = {c:lambda x: float('nan') if x == '?' else float(x) for c in ['y','x']})
+                    # df = df.sort_values(['ped_id', 'frame_num'])
                     self.target_ids = np.array(df[df['y'].isnull()].drop_duplicates(subset={'ped_id'}, keep='first', inplace=False)['ped_id'])
 
             # convert pandas -> numpy array
@@ -238,7 +214,6 @@ class DataLoader():
             
             # get frame numbers
             frameList = data[0, :].tolist()
-
 
             # Number of frames
             numFrames = len(frameList)
@@ -421,7 +396,8 @@ class DataLoader():
                 numPedsList_batch.append(seq_numPedsList)
                 PedsList_batch.append(seq_PedsList)
                 # get correct target ped id for the sequence
-                target_ids.append(self.target_ids[self.dataset_pointer][math.floor((self.frame_pointer)/self.seq_length)])
+                # target_ids.append(self.target_ids[self.dataset_pointer][int(math.floor((self.frame_pointer)/self.seq_length))])
+                target_ids.append(0)
                 self.frame_pointer += self.seq_length
 
                 d.append(self.dataset_pointer)
